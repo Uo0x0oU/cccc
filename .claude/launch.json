@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "landolt",
+      "runtimeExecutable": "powershell",
+      "runtimeArgs": ["-NoProfile", "-Command", "$listener = [System.Net.HttpListener]::new(); $listener.Prefixes.Add('http://localhost:3000/'); $listener.Start(); Write-Host 'Listening on http://localhost:3000'; while ($true) { $ctx = $listener.GetContext(); $req = $ctx.Request; $res = $ctx.Response; $path = $req.Url.LocalPath; if ($path -eq '/' -or $path -eq '') { $path = '/index.html' }; $file = Join-Path 'C:\\Users\\melon\\Desktop\\GUI\\Git\\cccc' $path.TrimStart('/'); if (Test-Path $file) { $bytes = [System.IO.File]::ReadAllBytes($file); $res.OutputStream.Write($bytes, 0, $bytes.Length) }; $res.Close() }"],
+      "port": 3000
+    }
+  ]
+}

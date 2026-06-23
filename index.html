@@ -1,11 +1,405 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=>, initial-scale=1.0">
-    <title>Document</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ランドルト環 視力検査</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: #1a1a2e;
+      color: #fff;
+      font-family: 'Segoe UI', sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+
+    h1 {
+      font-size: 1.4rem;
+      margin-bottom: 12px;
+      color: #a0c4ff;
+      letter-spacing: 0.1em;
+    }
+
+    #main-area {
+      display: flex;
+      gap: 20px;
+      align-items: flex-start;
+    }
+
+    /* カメラ＋ハンドトラッキング */
+    #camera-container {
+      position: relative;
+      width: 400px;
+      height: 300px;
+      border-radius: 12px;
+      overflow: hidden;
+      border: 2px solid #333;
+    }
+
+    #video {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      transform: scaleX(-1);
+    }
+
+    #hand-canvas {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      transform: scaleX(-1);
+    }
+
+    /* 方向インジケーター */
+    #direction-indicator {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    .dir-zone {
+      position: absolute;
+      background: rgba(255,255,255,0.08);
+      border-radius: 6px;
+      transition: background 0.15s;
+    }
+    .dir-zone.active { background: rgba(100,200,255,0.4); }
+
+    #zone-up    { top: 0;    left: 20%;  width: 60%; height: 18%; }
+    #zone-down  { bottom: 0; left: 20%;  width: 60%; height: 18%; }
+    #zone-left  { top: 20%;  left: 0;    width: 18%; height: 60%; }
+    #zone-right { top: 20%;  right: 0;   width: 18%; height: 60%; }
+
+    .dir-label {
+      position: absolute;
+      width: 100%;
+      text-align: center;
+      font-size: 0.75rem;
+      color: rgba(255,255,255,0.6);
+      top: 50%;
+      transform: translateY(-50%);
+    }
+
+    /* ランドルト環パネル */
+    #ring-panel {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+    }
+
+    #landolt-canvas {
+      border-radius: 12px;
+      background: #fff;
+      box-shadow: 0 0 30px rgba(160,196,255,0.3);
+    }
+
+    #answer-display {
+      font-size: 1.2rem;
+      font-weight: bold;
+      color: #a0c4ff;
+      min-height: 2rem;
+      transition: opacity 0.3s;
+    }
+
+    #next-btn {
+      padding: 10px 28px;
+      border-radius: 8px;
+      border: none;
+      background: #4a90e2;
+      color: #fff;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    #next-btn:hover { background: #357abd; }
+
+    #status {
+      margin-top: 10px;
+      font-size: 0.8rem;
+      color: #888;
+    }
+
+    /* クールダウン中はハイライト */
+    #cooldown-bar {
+      width: 200px;
+      height: 4px;
+      background: #333;
+      border-radius: 2px;
+      overflow: hidden;
+      margin-top: 4px;
+    }
+    #cooldown-fill {
+      height: 100%;
+      width: 0%;
+      background: #4a90e2;
+      transition: width 0.05s linear;
+    }
+  </style>
 </head>
 <body>
-    <h1>Hello World</h1>
+
+<h1>👁 ランドルト環 視力検査アシスト</h1>
+
+<div id="main-area">
+  <!-- カメラ側 -->
+  <div>
+    <div id="camera-container">
+      <video id="video" autoplay playsinline muted></video>
+      <canvas id="hand-canvas"></canvas>
+      <div id="direction-indicator">
+        <div class="dir-zone" id="zone-up">   <div class="dir-label">上</div></div>
+        <div class="dir-zone" id="zone-down"> <div class="dir-label">下</div></div>
+        <div class="dir-zone" id="zone-left"> <div class="dir-label">左</div></div>
+        <div class="dir-zone" id="zone-right"><div class="dir-label">右</div></div>
+      </div>
+    </div>
+    <div id="status">カメラ起動中…</div>
+    <div id="cooldown-bar"><div id="cooldown-fill"></div></div>
+  </div>
+
+  <!-- ランドルト環側 -->
+  <div id="ring-panel">
+    <canvas id="landolt-canvas" width="260" height="260"></canvas>
+    <div id="answer-display"></div>
+    <button id="next-btn">次の問題</button>
+  </div>
+</div>
+
+<script type="module">
+import {
+  HandLandmarker,
+  FilesetResolver
+} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm";
+
+// ── 定数 ─────────────────────────────────────────
+const DIRECTIONS = ['上', '下', '左', '右'];
+const ZONE_THRESHOLD = 0.18; // 画面端からの割合
+const COOLDOWN_MS = 1800;     // 検出後の待機時間
+
+// ── ランドルト環描画 ──────────────────────────────
+const landoltCanvas = document.getElementById('landolt-canvas');
+const lctx = landoltCanvas.getContext('2d');
+
+let currentDir = '';
+
+function gapAngle(dir) {
+  // 隙間の中心角度（ラジアン）、隙間幅 ±30°
+  switch (dir) {
+    case '右': return 0;
+    case '下': return Math.PI / 2;
+    case '左': return Math.PI;
+    case '上': return -Math.PI / 2;
+  }
+}
+
+function drawLandolt(dir) {
+  const W = landoltCanvas.width;
+  const H = landoltCanvas.height;
+  const cx = W / 2, cy = H / 2;
+  const R = 90, stroke = 22;
+  const gap = Math.PI / 6; // 30°
+
+  lctx.clearRect(0, 0, W, H);
+  lctx.fillStyle = '#ffffff';
+  lctx.fillRect(0, 0, W, H);
+
+  const center = gapAngle(dir);
+  const startA = center + gap;
+  const endA   = center - gap + Math.PI * 2;
+
+  lctx.beginPath();
+  lctx.arc(cx, cy, R, startA, endA);
+  lctx.strokeStyle = '#111';
+  lctx.lineWidth = stroke;
+  lctx.lineCap = 'butt';
+  lctx.stroke();
+}
+
+function nextQuestion() {
+  currentDir = DIRECTIONS[Math.floor(Math.random() * 4)];
+  drawLandolt(currentDir);
+  document.getElementById('answer-display').textContent = '';
+  cooldownActive = false;
+  document.getElementById('cooldown-fill').style.width = '0%';
+  clearZones();
+}
+
+// ── 音声合成 ──────────────────────────────────────
+function speak(text) {
+  window.speechSynthesis.cancel();
+  const utter = new SpeechSynthesisUtterance(text + 'です');
+  utter.lang = 'ja-JP';
+  utter.rate = 0.9;
+  utter.pitch = 1.1;
+  window.speechSynthesis.speak(utter);
+}
+
+// ── 方向検出 ──────────────────────────────────────
+let cooldownActive = false;
+let cooldownStart = 0;
+
+function clearZones() {
+  document.querySelectorAll('.dir-zone').forEach(z => z.classList.remove('active'));
+}
+
+function detectDirection(nx, ny) {
+  // nx, ny は正規化座標 (0〜1)、ただしミラー済み
+  if (ny < ZONE_THRESHOLD)             return '上';
+  if (ny > 1 - ZONE_THRESHOLD)         return '下';
+  if (nx < ZONE_THRESHOLD)             return '左';
+  if (nx > 1 - ZONE_THRESHOLD)         return '右';
+  return null;
+}
+
+function activateZone(dir) {
+  clearZones();
+  if (!dir) return;
+  const map = { '上': 'zone-up', '下': 'zone-down', '左': 'zone-left', '右': 'zone-right' };
+  document.getElementById(map[dir])?.classList.add('active');
+}
+
+function onDirectionDetected(dir) {
+  if (cooldownActive) return;
+  cooldownActive = true;
+  cooldownStart = performance.now();
+
+  document.getElementById('answer-display').textContent = `→ ${dir}`;
+  speak(dir);
+  activateZone(dir);
+
+  // クールダウンバー
+  const fill = document.getElementById('cooldown-fill');
+  function animBar(now) {
+    const elapsed = now - cooldownStart;
+    const pct = Math.min((elapsed / COOLDOWN_MS) * 100, 100);
+    fill.style.width = pct + '%';
+    if (elapsed < COOLDOWN_MS) requestAnimationFrame(animBar);
+    else {
+      fill.style.width = '0%';
+      cooldownActive = false;
+      clearZones();
+    }
+  }
+  requestAnimationFrame(animBar);
+}
+
+// ── MediaPipe HandLandmarker ──────────────────────
+const video   = document.getElementById('video');
+const hCanvas = document.getElementById('hand-canvas');
+const hctx    = hCanvas.getContext('2d');
+
+let handLandmarker = null;
+let lastVideoTime = -1;
+
+async function initMediaPipe() {
+  const vision = await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+  );
+  handLandmarker = await HandLandmarker.createFromOptions(vision, {
+    baseOptions: {
+      modelAssetPath:
+        "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+      delegate: "GPU"
+    },
+    runningMode: "VIDEO",
+    numHands: 1
+  });
+  document.getElementById('status').textContent = 'ハンドトラッキング準備完了';
+  startCamera();
+}
+
+async function startCamera() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    video.srcObject = stream;
+    video.addEventListener('loadeddata', () => {
+      hCanvas.width  = video.videoWidth;
+      hCanvas.height = video.videoHeight;
+      document.getElementById('status').textContent = '検出中…';
+      requestAnimationFrame(detect);
+    });
+  } catch (e) {
+    document.getElementById('status').textContent = 'カメラエラー: ' + e.message;
+  }
+}
+
+function detect(now) {
+  if (video.readyState < 2) { requestAnimationFrame(detect); return; }
+  if (video.currentTime !== lastVideoTime) {
+    lastVideoTime = video.currentTime;
+    const results = handLandmarker.detectForVideo(video, now);
+
+    hctx.clearRect(0, 0, hCanvas.width, hCanvas.height);
+
+    if (results.landmarks?.length > 0) {
+      const lm = results.landmarks[0];
+      drawHand(lm);
+
+      // 人差し指先端 = landmark 8
+      const tip = lm[8];
+      // ミラー補正（canvas は -scaleX でミラー済みなので座標は 1-x）
+      const mirroredX = 1 - tip.x;
+      const dir = detectDirection(mirroredX, tip.y);
+      if (dir) onDirectionDetected(dir);
+      else if (!cooldownActive) clearZones();
+    } else {
+      if (!cooldownActive) clearZones();
+    }
+  }
+  requestAnimationFrame(detect);
+}
+
+// 手のスケルトン描画
+const CONNECTIONS = [
+  [0,1],[1,2],[2,3],[3,4],
+  [0,5],[5,6],[6,7],[7,8],
+  [0,9],[9,10],[10,11],[11,12],
+  [0,13],[13,14],[14,15],[15,16],
+  [0,17],[17,18],[18,19],[19,20],
+  [5,9],[9,13],[13,17]
+];
+
+function drawHand(lm) {
+  const W = hCanvas.width, H = hCanvas.height;
+
+  // 接続線
+  hctx.strokeStyle = 'rgba(100,200,255,0.7)';
+  hctx.lineWidth = 2;
+  for (const [a, b] of CONNECTIONS) {
+    hctx.beginPath();
+    hctx.moveTo(lm[a].x * W, lm[a].y * H);
+    hctx.lineTo(lm[b].x * W, lm[b].y * H);
+    hctx.stroke();
+  }
+
+  // 関節点
+  for (const p of lm) {
+    hctx.beginPath();
+    hctx.arc(p.x * W, p.y * H, 4, 0, Math.PI * 2);
+    hctx.fillStyle = '#fff';
+    hctx.fill();
+  }
+
+  // 人差し指先端を強調
+  const tip = lm[8];
+  hctx.beginPath();
+  hctx.arc(tip.x * W, tip.y * H, 9, 0, Math.PI * 2);
+  hctx.fillStyle = '#ff6b6b';
+  hctx.fill();
+}
+
+// ── 起動 ──────────────────────────────────────────
+document.getElementById('next-btn').addEventListener('click', nextQuestion);
+nextQuestion();
+initMediaPipe();
+</script>
 </body>
 </html>
