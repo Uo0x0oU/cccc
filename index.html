@@ -109,19 +109,7 @@
       transition: opacity 0.3s;
     }
 
-    #next-btn {
-      padding: 10px 28px;
-      border-radius: 8px;
-      border: none;
-      background: #4a90e2;
-      color: #fff;
-      font-size: 1rem;
-      cursor: pointer;
-      transition: background 0.2s;
-    }
-    #next-btn:hover { background: #357abd; }
-
-    #status {
+#status {
       margin-top: 10px;
       font-size: 0.8rem;
       color: #888;
@@ -169,7 +157,6 @@
   <div id="ring-panel">
     <canvas id="landolt-canvas" width="260" height="260"></canvas>
     <div id="answer-display"></div>
-    <button id="next-btn">次の問題</button>
   </div>
 </div>
 
@@ -181,17 +168,17 @@ import {
 
 // ── 定数 ─────────────────────────────────────────
 const DIRECTIONS = ['上', '下', '左', '右'];
-const ZONE_THRESHOLD = 0.18; // 画面端からの割合
-const COOLDOWN_MS = 1800;     // 検出後の待機時間
+const ZONE_THRESHOLD = 0.18;  // 画面端からの割合
+const COOLDOWN_MS = 1800;     // 指検出後の再検出抑制時間
 
 // ── ランドルト環描画 ──────────────────────────────
 const landoltCanvas = document.getElementById('landolt-canvas');
 const lctx = landoltCanvas.getContext('2d');
 
 let currentDir = '';
+let locked = false; // 正解検出〜次の問題表示まで入力をブロック
 
 function gapAngle(dir) {
-  // 隙間の中心角度（ラジアン）、隙間幅 ±30°
   switch (dir) {
     case '右': return 0;
     case '下': return Math.PI / 2;
@@ -201,44 +188,48 @@ function gapAngle(dir) {
 }
 
 function drawLandolt(dir) {
-  const W = landoltCanvas.width;
-  const H = landoltCanvas.height;
+  const W = landoltCanvas.width, H = landoltCanvas.height;
   const cx = W / 2, cy = H / 2;
-  const R = 90, stroke = 22;
-  const gap = Math.PI / 6; // 30°
+  const R = 90, stroke = 22, gap = Math.PI / 6;
 
   lctx.clearRect(0, 0, W, H);
   lctx.fillStyle = '#ffffff';
   lctx.fillRect(0, 0, W, H);
 
   const center = gapAngle(dir);
-  const startA = center + gap;
-  const endA   = center - gap + Math.PI * 2;
-
   lctx.beginPath();
-  lctx.arc(cx, cy, R, startA, endA);
+  lctx.arc(cx, cy, R, center + gap, center - gap + Math.PI * 2);
   lctx.strokeStyle = '#111';
   lctx.lineWidth = stroke;
   lctx.lineCap = 'butt';
   lctx.stroke();
 }
 
-function nextQuestion() {
-  currentDir = DIRECTIONS[Math.floor(Math.random() * 4)];
+function newQuestion() {
+  // 現在と異なる向きをランダム選択
+  const choices = DIRECTIONS.filter(d => d !== currentDir);
+  currentDir = choices[Math.floor(Math.random() * choices.length)];
   drawLandolt(currentDir);
   document.getElementById('answer-display').textContent = '';
-  cooldownActive = false;
-  document.getElementById('cooldown-fill').style.width = '0%';
-  clearZones();
 }
 
 // ── 音声合成 ──────────────────────────────────────
-function speak(text) {
+// 次の問題へ移行: 発話終了 + 1.5秒後
+function speakAndAdvance(text) {
   window.speechSynthesis.cancel();
   const utter = new SpeechSynthesisUtterance(text + 'です');
   utter.lang = 'ja-JP';
   utter.rate = 0.9;
   utter.pitch = 1.1;
+  utter.onend = () => {
+    setTimeout(() => {
+      locked = false;
+      cooldownActive = false;
+      document.getElementById('cooldown-fill').style.width = '0%';
+      clearZones();
+      newQuestion();
+    }, 1500);
+  };
   window.speechSynthesis.speak(utter);
 }
 
@@ -251,11 +242,10 @@ function clearZones() {
 }
 
 function detectDirection(nx, ny) {
-  // nx, ny は正規化座標 (0〜1)、ただしミラー済み
-  if (ny < ZONE_THRESHOLD)             return '上';
-  if (ny > 1 - ZONE_THRESHOLD)         return '下';
-  if (nx < ZONE_THRESHOLD)             return '左';
-  if (nx > 1 - ZONE_THRESHOLD)         return '右';
+  if (ny < ZONE_THRESHOLD)     return '上';
+  if (ny > 1 - ZONE_THRESHOLD) return '下';
+  if (nx < ZONE_THRESHOLD)     return '左';
+  if (nx > 1 - ZONE_THRESHOLD) return '右';
   return null;
 }
 
@@ -266,27 +256,38 @@ function activateZone(dir) {
   document.getElementById(map[dir])?.classList.add('active');
 }
 
-function onDirectionDetected(dir) {
-  if (cooldownActive) return;
+function onFingerDetected(fingerDir) {
+  if (cooldownActive || locked) return;
+
+  // 指の向きがランドルト環の向きと一致した場合のみ反応
+  if (fingerDir !== currentDir) {
+    activateZone(fingerDir); // ゾーンはハイライトするが何もしない
+    return;
+  }
+
+  // 正解検出 → ランドルト環を変更して新しい向きを音声で伝える
+  locked = true;
   cooldownActive = true;
   cooldownStart = performance.now();
+  activateZone(fingerDir);
 
-  document.getElementById('answer-display').textContent = `→ ${dir}`;
-  speak(dir);
-  activateZone(dir);
+  // 新しいランドルト環の向きに変更
+  const choices = DIRECTIONS.filter(d => d !== currentDir);
+  const nextDir = choices[Math.floor(Math.random() * choices.length)];
+  currentDir = nextDir;
+  drawLandolt(currentDir);
+  document.getElementById('answer-display').textContent = `→ ${currentDir}`;
 
-  // クールダウンバー
+  // 新しいランドルト環の向きを音声で伝え、終了後 1.5秒で次へ
+  speakAndAdvance(currentDir);
+
+  // クールダウンバーアニメーション
   const fill = document.getElementById('cooldown-fill');
   function animBar(now) {
     const elapsed = now - cooldownStart;
     const pct = Math.min((elapsed / COOLDOWN_MS) * 100, 100);
     fill.style.width = pct + '%';
     if (elapsed < COOLDOWN_MS) requestAnimationFrame(animBar);
-    else {
-      fill.style.width = '0%';
-      cooldownActive = false;
-      clearZones();
-    }
   }
   requestAnimationFrame(animBar);
 }
@@ -348,7 +349,7 @@ function detect(now) {
       // ミラー補正（canvas は -scaleX でミラー済みなので座標は 1-x）
       const mirroredX = 1 - tip.x;
       const dir = detectDirection(mirroredX, tip.y);
-      if (dir) onDirectionDetected(dir);
+      if (dir) onFingerDetected(dir);
       else if (!cooldownActive) clearZones();
     } else {
       if (!cooldownActive) clearZones();
@@ -397,8 +398,7 @@ function drawHand(lm) {
 }
 
 // ── 起動 ──────────────────────────────────────────
-document.getElementById('next-btn').addEventListener('click', nextQuestion);
-nextQuestion();
+newQuestion();
 initMediaPipe();
 </script>
 </body>
