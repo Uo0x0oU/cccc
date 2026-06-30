@@ -16,7 +16,7 @@
       align-items: center;
       justify-content: center;
       min-height: 100vh;
-      overflow: hidden;
+      padding: 20px 0;
     }
 
     h1 {
@@ -28,15 +28,59 @@
 
     #main-area {
       display: flex;
-      gap: 20px;
-      align-items: flex-start;
+      flex-direction: column;
+      align-items: center;
+      gap: 18px;
     }
 
-    /* カメラ＋ハンドトラッキング */
+    #screen-row {
+      display: flex;
+      gap: 24px;
+      align-items: center;
+    }
+
+    /* モニター風フレーム */
+    #chart-frame-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    #chart-frame {
+      background: #fff;
+      border: 14px solid #2b2b3d;
+      border-radius: 14px;
+      box-shadow: 0 0 30px rgba(160,196,255,0.3);
+      max-height: 620px;
+      overflow-y: auto;
+    }
+
+    #chart-canvas { display: block; }
+
+    #screen-stand {
+      width: 0; height: 0;
+      border-left: 36px solid transparent;
+      border-right: 36px solid transparent;
+      border-top: 20px solid #2b2b3d;
+      margin-top: -1px;
+    }
+
+    /* 回答表示（スケッチの「左です。」「上。」相当） */
+    #answer-giant {
+      min-width: 180px;
+      min-height: 3rem;
+      font-size: 2.4rem;
+      font-weight: bold;
+      color: #a0c4ff;
+      text-align: center;
+      transition: opacity 0.3s;
+    }
+
+    /* カメラ＋ハンドトラッキング（スケッチの指示棒に相当） */
     #camera-container {
       position: relative;
-      width: 400px;
-      height: 300px;
+      width: 360px;
+      height: 270px;
       border-radius: 12px;
       overflow: hidden;
       border: 2px solid #333;
@@ -87,42 +131,20 @@
       transform: translateY(-50%);
     }
 
-    /* ランドルト環パネル */
-    #ring-panel {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 12px;
-    }
-
-    #landolt-canvas {
-      border-radius: 12px;
-      background: #fff;
-      box-shadow: 0 0 30px rgba(160,196,255,0.3);
-    }
-
-    #answer-display {
-      font-size: 1.2rem;
-      font-weight: bold;
-      color: #a0c4ff;
-      min-height: 2rem;
-      transition: opacity 0.3s;
-    }
-
-#status {
+    #status {
       margin-top: 10px;
       font-size: 0.8rem;
       color: #888;
+      text-align: center;
     }
 
-    /* クールダウン中はハイライト */
     #cooldown-bar {
       width: 200px;
       height: 4px;
       background: #333;
       border-radius: 2px;
       overflow: hidden;
-      margin-top: 4px;
+      margin: 4px auto 0;
     }
     #cooldown-fill {
       height: 100%;
@@ -137,7 +159,20 @@
 <h1>👁 ランドルト環 視力検査アシスト</h1>
 
 <div id="main-area">
-  <!-- カメラ側 -->
+  <div id="screen-row">
+    <!-- 視力検査表（複数行のランドルト環） -->
+    <div id="chart-frame-wrap">
+      <div id="chart-frame">
+        <canvas id="chart-canvas"></canvas>
+      </div>
+      <div id="screen-stand"></div>
+    </div>
+
+    <!-- 回答表示 -->
+    <div id="answer-giant"></div>
+  </div>
+
+  <!-- 指し棒代わりのハンドトラッキング -->
   <div>
     <div id="camera-container">
       <video id="video" autoplay playsinline muted></video>
@@ -152,12 +187,6 @@
     <div id="status">カメラ起動中…</div>
     <div id="cooldown-bar"><div id="cooldown-fill"></div></div>
   </div>
-
-  <!-- ランドルト環側 -->
-  <div id="ring-panel">
-    <canvas id="landolt-canvas" width="260" height="260"></canvas>
-    <div id="answer-display"></div>
-  </div>
 </div>
 
 <script type="module">
@@ -171,12 +200,23 @@ const DIRECTIONS = ['上', '下', '左', '右'];
 const ZONE_THRESHOLD = 0.18;  // 画面端からの割合
 const COOLDOWN_MS = 1800;     // 指検出後の再検出抑制時間
 
-// ── ランドルト環描画 ──────────────────────────────
-const landoltCanvas = document.getElementById('landolt-canvas');
-const lctx = landoltCanvas.getContext('2d');
+// 一般的な視力検査表の刻み（小数視力）
+const ACUITY_ROWS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.2];
+const RINGS_PER_ROW = 4;
+const ROW_H = 72, TOP_PAD = 20, BOTTOM_PAD = 12;
+const AREA_X0 = 60, AREA_X1 = 380;
+const CANVAS_W = 560;
 
 let currentDir = '';
 let locked = false; // 正解検出〜次の問題表示まで入力をブロック
+let chartDirs = [];          // chartDirs[row][col] = 向き
+let active = { row: 0, idx: 0 }; // 現在出題中の環
+
+// ── ランドルト環チャート描画 ──────────────────────
+const chartCanvas = document.getElementById('chart-canvas');
+const cctx = chartCanvas.getContext('2d');
+chartCanvas.width = CANVAS_W;
+chartCanvas.height = ACUITY_ROWS.length * ROW_H + TOP_PAD + BOTTOM_PAD;
 
 function gapAngle(dir) {
   switch (dir) {
@@ -187,30 +227,146 @@ function gapAngle(dir) {
   }
 }
 
-function drawLandolt(dir) {
-  const W = landoltCanvas.width, H = landoltCanvas.height;
-  const cx = W / 2, cy = H / 2;
-  const R = 90, stroke = 22, gap = Math.PI / 6;
-
-  lctx.clearRect(0, 0, W, H);
-  lctx.fillStyle = '#ffffff';
-  lctx.fillRect(0, 0, W, H);
-
-  const center = gapAngle(dir);
-  lctx.beginPath();
-  lctx.arc(cx, cy, R, center + gap, center - gap + Math.PI * 2);
-  lctx.strokeStyle = '#111';
-  lctx.lineWidth = stroke;
-  lctx.lineCap = 'butt';
-  lctx.stroke();
+function randomDir(exclude) {
+  const choices = DIRECTIONS.filter(d => d !== exclude);
+  return choices[Math.floor(Math.random() * choices.length)];
 }
 
-function newQuestion() {
-  // 現在と異なる向きをランダム選択
-  const choices = DIRECTIONS.filter(d => d !== currentDir);
-  currentDir = choices[Math.floor(Math.random() * choices.length)];
-  drawLandolt(currentDir);
-  document.getElementById('answer-display').textContent = '';
+function ringDiameter(acuity) {
+  const K = 14, minD = 12, maxD = 60;
+  return Math.min(maxD, Math.max(minD, K / acuity));
+}
+
+function rowCenterY(rowIdx) {
+  return TOP_PAD + rowIdx * ROW_H + ROW_H / 2;
+}
+
+function ringCenterX(idx) {
+  const step = (AREA_X1 - AREA_X0) / RINGS_PER_ROW;
+  return AREA_X0 + step * (idx + 0.5);
+}
+
+function drawRing(ctx, cx, cy, R, stroke, dir) {
+  const gap = Math.PI / 6;
+  const center = gapAngle(dir);
+  ctx.beginPath();
+  ctx.arc(cx, cy, R, center + gap, center - gap + Math.PI * 2);
+  ctx.strokeStyle = '#111';
+  ctx.lineWidth = stroke;
+  ctx.lineCap = 'butt';
+  ctx.stroke();
+}
+
+function drawSparkle(ctx, x, y, scale = 1) {
+  ctx.save();
+  ctx.strokeStyle = '#ffd166';
+  ctx.lineWidth = 2 * scale;
+  const s = 6 * scale;
+  ctx.beginPath();
+  ctx.moveTo(x - s, y); ctx.lineTo(x + s, y);
+  ctx.moveTo(x, y - s); ctx.lineTo(x, y + s);
+  ctx.moveTo(x - s * 0.7, y - s * 0.7); ctx.lineTo(x + s * 0.7, y + s * 0.7);
+  ctx.moveTo(x - s * 0.7, y + s * 0.7); ctx.lineTo(x + s * 0.7, y - s * 0.7);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function initChart() {
+  chartDirs = ACUITY_ROWS.map(() =>
+    Array.from({ length: RINGS_PER_ROW }, () => randomDir())
+  );
+}
+
+function selectNewActiveRing(excludeDir) {
+  const dir = randomDir(excludeDir);
+  active = {
+    row: Math.floor(Math.random() * ACUITY_ROWS.length),
+    idx: Math.floor(Math.random() * RINGS_PER_ROW)
+  };
+  chartDirs[active.row][active.idx] = dir;
+  currentDir = dir;
+  drawChart();
+}
+
+function drawChart() {
+  const W = chartCanvas.width, H = chartCanvas.height;
+  cctx.clearRect(0, 0, W, H);
+
+  // 背景（方眼紙風）
+  cctx.fillStyle = '#fff';
+  cctx.fillRect(0, 0, W, H);
+  cctx.strokeStyle = 'rgba(160,180,210,0.25)';
+  cctx.lineWidth = 1;
+  for (let x = 0; x < W; x += 20) {
+    cctx.beginPath(); cctx.moveTo(x, 0); cctx.lineTo(x, H); cctx.stroke();
+  }
+  for (let y = 0; y < H; y += 20) {
+    cctx.beginPath(); cctx.moveTo(0, y); cctx.lineTo(W, y); cctx.stroke();
+  }
+
+  ACUITY_ROWS.forEach((acuity, rowIdx) => {
+    const cy = rowCenterY(rowIdx);
+    const D = ringDiameter(acuity);
+    const R = D / 2, stroke = Math.max(3, D / 4.2);
+
+    // 視力値ラベル
+    cctx.fillStyle = '#222';
+    cctx.font = 'bold 16px "Segoe UI", sans-serif';
+    cctx.textAlign = 'left';
+    cctx.textBaseline = 'middle';
+    cctx.fillText(acuity.toFixed(1), 14, cy);
+
+    // 行の区切り線
+    cctx.strokeStyle = 'rgba(0,0,0,0.12)';
+    cctx.lineWidth = 1;
+    cctx.beginPath();
+    cctx.moveTo(8, cy + ROW_H / 2);
+    cctx.lineTo(W - 8, cy + ROW_H / 2);
+    cctx.stroke();
+
+    for (let i = 0; i < RINGS_PER_ROW; i++) {
+      const cx = ringCenterX(i);
+      const dir = chartDirs[rowIdx][i];
+      drawRing(cctx, cx, cy, R, stroke, dir);
+
+      const isActive = (rowIdx === active.row && i === active.idx);
+      if (isActive) {
+        // 強調用の破線サークル
+        cctx.save();
+        cctx.setLineDash([4, 4]);
+        cctx.strokeStyle = '#ff6b81';
+        cctx.lineWidth = 2;
+        cctx.beginPath();
+        cctx.arc(cx, cy, R + 10, 0, Math.PI * 2);
+        cctx.stroke();
+        cctx.restore();
+
+        drawSparkle(cctx, cx + R + 4, cy - R - 6);
+        drawSparkle(cctx, cx - R - 8, cy + R + 8, 0.7);
+
+        // 「これは？」矢印
+        const ax0 = Math.min(W - 14, cx + R + 70);
+        const ax1 = cx + R + 14;
+        cctx.strokeStyle = '#2b2b3d';
+        cctx.fillStyle = '#2b2b3d';
+        cctx.lineWidth = 2;
+        cctx.beginPath();
+        cctx.moveTo(ax0, cy);
+        cctx.lineTo(ax1, cy);
+        cctx.stroke();
+        cctx.beginPath();
+        cctx.moveTo(ax1, cy);
+        cctx.lineTo(ax1 + 8, cy - 5);
+        cctx.lineTo(ax1 + 8, cy + 5);
+        cctx.closePath();
+        cctx.fill();
+
+        cctx.font = 'bold 14px "Segoe UI", sans-serif';
+        cctx.textAlign = 'left';
+        cctx.fillText('これは？', Math.min(W - 90, ax0 + 4), cy - 12);
+      }
+    }
+  });
 }
 
 // ── 音声合成 ──────────────────────────────────────
@@ -227,7 +383,8 @@ function speakAndAdvance(text) {
       cooldownActive = false;
       document.getElementById('cooldown-fill').style.width = '0%';
       clearZones();
-      newQuestion();
+      selectNewActiveRing(currentDir);
+      document.getElementById('answer-giant').textContent = '';
     }, 1500);
   };
   window.speechSynthesis.speak(utter);
@@ -259,26 +416,21 @@ function activateZone(dir) {
 function onFingerDetected(fingerDir) {
   if (cooldownActive || locked) return;
 
-  // 指の向きがランドルト環の向きと一致した場合のみ反応
+  // 指の向きが出題中の環の向きと一致した場合のみ反応
   if (fingerDir !== currentDir) {
     activateZone(fingerDir); // ゾーンはハイライトするが何もしない
     return;
   }
 
-  // 正解検出 → ランドルト環を変更して新しい向きを音声で伝える
+  // 正解検出 → 出題する環を変更して新しい向きを音声で伝える
   locked = true;
   cooldownActive = true;
   cooldownStart = performance.now();
   activateZone(fingerDir);
 
-  // 新しいランドルト環の向きに変更
-  const choices = DIRECTIONS.filter(d => d !== currentDir);
-  const nextDir = choices[Math.floor(Math.random() * choices.length)];
-  currentDir = nextDir;
-  drawLandolt(currentDir);
-  document.getElementById('answer-display').textContent = `→ ${currentDir}`;
+  selectNewActiveRing(currentDir);
+  document.getElementById('answer-giant').textContent = `${currentDir}です。`;
 
-  // 新しいランドルト環の向きを音声で伝え、終了後 1.5秒で次へ
   speakAndAdvance(currentDir);
 
   // クールダウンバーアニメーション
@@ -398,7 +550,8 @@ function drawHand(lm) {
 }
 
 // ── 起動 ──────────────────────────────────────────
-newQuestion();
+initChart();
+selectNewActiveRing();
 initMediaPipe();
 </script>
 </body>
