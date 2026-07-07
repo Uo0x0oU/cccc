@@ -20,25 +20,24 @@
       <div id="screen-stand"></div>
     </div>
 
-    <!-- 回答表示 -->
-    <div id="answer-giant"></div>
+    <!-- カメラ映像 -->
+    <div id="camera-side">
+      <div id="camera-container">
+        <video id="video" autoplay playsinline muted></video>
+        <canvas id="hand-canvas"></canvas>
+        <div id="direction-indicator">
+          <div class="dir-zone" id="zone-up">   <div class="dir-label">上</div></div>
+          <div class="dir-zone" id="zone-down"> <div class="dir-label">下</div></div>
+          <div class="dir-zone" id="zone-left"> <div class="dir-label">左</div></div>
+          <div class="dir-zone" id="zone-right"><div class="dir-label">右</div></div>
+        </div>
+      </div>
+      <div id="status">カメラ起動中…</div>
+    </div>
   </div>
 
-  <!-- 指し棒代わりのハンドトラッキング -->
-  <div>
-    <div id="camera-container">
-      <video id="video" autoplay playsinline muted></video>
-      <canvas id="hand-canvas"></canvas>
-      <div id="direction-indicator">
-        <div class="dir-zone" id="zone-up">   <div class="dir-label">上</div></div>
-        <div class="dir-zone" id="zone-down"> <div class="dir-label">下</div></div>
-        <div class="dir-zone" id="zone-left"> <div class="dir-label">左</div></div>
-        <div class="dir-zone" id="zone-right"><div class="dir-label">右</div></div>
-      </div>
-    </div>
-    <div id="status">カメラ起動中…</div>
-    <div id="cooldown-bar"><div id="cooldown-fill"></div></div>
-  </div>
+  <!-- 回答表示 -->
+  <div id="answer-giant"></div>
 </div>
 
 <script type="module" src="script.js"></script>

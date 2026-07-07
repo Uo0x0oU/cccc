@@ -9,7 +9,7 @@ const ZONE_THRESHOLD = 0.18;  // 画面端からの割合
 const COOLDOWN_MS = 1800;     // 指検出後の再検出抑制時間
 
 // 一般的な視力検査表の刻み（小数視力）
-const ACUITY_ROWS = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.2];
+const ACUITY_ROWS = [0.2, 0.4, 0.6, 0.8, 1.0, 1.2];
 const RINGS_PER_ROW = 4;
 const ROW_H = 72, TOP_PAD = 20, BOTTOM_PAD = 12;
 const AREA_X0 = 60, AREA_X1 = 380;
@@ -85,12 +85,18 @@ function initChart() {
   );
 }
 
-function selectNewActiveRing(excludeDir) {
-  const dir = randomDir(excludeDir);
+// 起動時のみ使用: アクティブな環の位置をランダムに決めて初期化
+function initActiveRing() {
   active = {
     row: Math.floor(Math.random() * ACUITY_ROWS.length),
     idx: Math.floor(Math.random() * RINGS_PER_ROW)
   };
+  rotateActiveDir();
+}
+
+// 正解時: 同じ環の向きだけをランダムに変える
+function rotateActiveDir(excludeDir) {
+  const dir = randomDir(excludeDir);
   chartDirs[active.row][active.idx] = dir;
   currentDir = dir;
   drawChart();
@@ -189,9 +195,8 @@ function speakAndAdvance(text) {
     setTimeout(() => {
       locked = false;
       cooldownActive = false;
-      document.getElementById('cooldown-fill').style.width = '0%';
       clearZones();
-      selectNewActiveRing(currentDir);
+      rotateActiveDir(currentDir);
       document.getElementById('answer-giant').textContent = '';
     }, 1500);
   };
@@ -236,20 +241,10 @@ function onFingerDetected(fingerDir) {
   cooldownStart = performance.now();
   activateZone(fingerDir);
 
-  selectNewActiveRing(currentDir);
+  rotateActiveDir(currentDir);
   document.getElementById('answer-giant').textContent = `${currentDir}です。`;
 
   speakAndAdvance(currentDir);
-
-  // クールダウンバーアニメーション
-  const fill = document.getElementById('cooldown-fill');
-  function animBar(now) {
-    const elapsed = now - cooldownStart;
-    const pct = Math.min((elapsed / COOLDOWN_MS) * 100, 100);
-    fill.style.width = pct + '%';
-    if (elapsed < COOLDOWN_MS) requestAnimationFrame(animBar);
-  }
-  requestAnimationFrame(animBar);
 }
 
 // ── MediaPipe HandLandmarker ──────────────────────
@@ -359,5 +354,5 @@ function drawHand(lm) {
 
 // ── 起動 ──────────────────────────────────────────
 initChart();
-selectNewActiveRing();
+initActiveRing();
 initMediaPipe();
