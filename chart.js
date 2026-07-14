@@ -103,42 +103,46 @@ function drawChart() {
     for (let i = 0; i < RINGS_PER_ROW; i++) {
       const cx = ringCenterX(i);
       drawRing(cctx, cx, cy, R, stroke, chartDirs[rowIdx][i]);
-
-      const isActive = (rowIdx === active.row && i === active.idx);
-      if (isActive) {
-        cctx.save();
-        cctx.setLineDash([4, 4]);
-        cctx.strokeStyle = '#ff6b81';
-        cctx.lineWidth = 2;
-        cctx.beginPath();
-        cctx.arc(cx, cy, R + 10, 0, Math.PI * 2);
-        cctx.stroke();
-        cctx.restore();
-
-        drawSparkle(cctx, cx + R + 4, cy - R - 6);
-        drawSparkle(cctx, cx - R - 8, cy + R + 8, 0.7);
-
-        const ax0 = Math.min(W - 14, cx + R + 70);
-        const ax1 = cx + R + 14;
-        cctx.strokeStyle = '#2b2b3d';
-        cctx.fillStyle = '#2b2b3d';
-        cctx.lineWidth = 2;
-        cctx.beginPath();
-        cctx.moveTo(ax0, cy); cctx.lineTo(ax1, cy);
-        cctx.stroke();
-        cctx.beginPath();
-        cctx.moveTo(ax1, cy);
-        cctx.lineTo(ax1 + 8, cy - 5);
-        cctx.lineTo(ax1 + 8, cy + 5);
-        cctx.closePath();
-        cctx.fill();
-
-        cctx.font = 'bold 14px "Segoe UI", sans-serif';
-        cctx.textAlign = 'left';
-        cctx.fillText('これは？', Math.min(W - 90, ax0 + 4), cy - 12);
-      }
     }
   });
+
+  // アクティブ環のハイライト・矢印・「これは？」を最前面に描画
+  const acy = rowCenterY(active.row);
+  const aD  = ringDiameter(ACUITY_ROWS[active.row]);
+  const aR  = aD / 2;
+  const acx = ringCenterX(active.idx);
+
+  cctx.save();
+  cctx.setLineDash([4, 4]);
+  cctx.strokeStyle = '#ffd166';
+  cctx.lineWidth = 2;
+  cctx.beginPath();
+  cctx.arc(acx, acy, aR + 10, 0, Math.PI * 2);
+  cctx.stroke();
+  cctx.restore();
+
+  drawSparkle(cctx, acx + aR + 4, acy - aR - 6);
+  drawSparkle(cctx, acx - aR - 8, acy + aR + 8, 0.7);
+
+  const ax0 = Math.min(W - 14, acx + aR + 70);
+  const ax1 = acx + aR + 14;
+  cctx.strokeStyle = '#c0336e';
+  cctx.fillStyle = '#c0336e';
+  cctx.lineWidth = 3;
+  cctx.beginPath();
+  cctx.moveTo(ax0, acy); cctx.lineTo(ax1, acy);
+  cctx.stroke();
+  cctx.beginPath();
+  cctx.moveTo(ax1, acy);
+  cctx.lineTo(ax1 + 12, acy - 7);
+  cctx.lineTo(ax1 + 12, acy + 7);
+  cctx.closePath();
+  cctx.fill();
+
+  cctx.fillStyle = '#c0336e';
+  cctx.font = '900 18px "Segoe UI", sans-serif';
+  cctx.textAlign = 'left';
+  cctx.fillText('これは？', Math.min(W - 90, ax0 + 4), acy - 14);
 }
 
 export function initChart() {
@@ -148,16 +152,22 @@ export function initChart() {
 }
 
 export function initActiveRing() {
-  active = {
-    row: Math.floor(Math.random() * ACUITY_ROWS.length),
-    idx: Math.floor(Math.random() * RINGS_PER_ROW)
-  };
-  rotateActiveDir();
+  moveToNewRing();
 }
 
+// 同じ位置のまま向きだけ変える（正解直後の即時フィードバック用）
 export function rotateActiveDir(excludeDir) {
   const dir = randomDir(excludeDir);
   chartDirs[active.row][active.idx] = dir;
   currentDir = dir;
   drawChart();
+}
+
+// ランダムな新しい位置へ移動（1.5秒後の次の問題遷移用）
+export function moveToNewRing(excludeDir) {
+  active = {
+    row: Math.floor(Math.random() * ACUITY_ROWS.length),
+    idx: Math.floor(Math.random() * RINGS_PER_ROW)
+  };
+  rotateActiveDir(excludeDir);
 }
